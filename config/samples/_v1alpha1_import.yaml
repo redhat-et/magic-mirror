@@ -1,0 +1,6 @@
+apiVersion: mirror.openshift.io/v1alpha1
+kind: Import
+metadata:
+  name: import-sample
+spec:
+  # TODO(user): Add fields here
