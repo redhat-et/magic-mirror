@@ -18,6 +18,7 @@ package controllers
 
 import (
 	"context"
+	"strconv"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -167,7 +168,7 @@ func (r *ImportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		err = r.Status().Update(ctx, instance)
 		if err != nil {
 			klog.Error(err, "Failed to update Import status")
-			return ctrl.Result{}, err
+			return ctrl.Result{Requeue: true}, err
 		}
 		return ctrl.Result{Requeue: true}, nil
 	}
@@ -202,6 +203,18 @@ func (r *ImportReconciler) deployRegistry(m *mirroropenshiftiov1alpha1.Import) *
 							ContainerPort: 11211,
 							Name:          "memcached",
 						}},
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "data",
+							MountPath: "/data",
+						}},
+					}},
+					Volumes: []corev1.Volume{{
+						Name: "data",
+						VolumeSource: corev1.VolumeSource{
+							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+								ClaimName: "pvc-" + m.Name,
+							},
+						},
 					}},
 				},
 			},
@@ -226,9 +239,28 @@ func (r *ImportReconciler) syncJob(m *mirroropenshiftiov1alpha1.Import) *batchv1
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
-						Image:   "alpine",
+						Image:   "quay.io/disco-mirror/mirror-sync:latest",
 						Name:    "sync" + m.Name,
-						Command: []string{"/bin/sh", "-c", "sleep 10"},
+						Command: []string{"/usr/local/bin/sync.sh"},
+						Env: []corev1.EnvVar{{
+							Name:  "SOURCETYPE",
+							Value: m.Spec.SourceType,
+						}, {
+							Name:  "SOURCE",
+							Value: m.Spec.Source,
+						}},
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "data",
+							MountPath: "/data",
+						}},
+					}},
+					Volumes: []corev1.Volume{{
+						Name: "data",
+						VolumeSource: corev1.VolumeSource{
+							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+								ClaimName: "pvc-" + m.Name,
+							},
+						},
 					}},
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 				},
@@ -240,6 +272,8 @@ func (r *ImportReconciler) syncJob(m *mirroropenshiftiov1alpha1.Import) *batchv1
 }
 
 func (r *ImportReconciler) pvcCreate(m *mirroropenshiftiov1alpha1.Import) *corev1.PersistentVolumeClaim {
+	// make the pvc size a string
+	size := strconv.Itoa(m.Spec.PvcSize)
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "pvc-" + m.Name,
@@ -251,7 +285,7 @@ func (r *ImportReconciler) pvcCreate(m *mirroropenshiftiov1alpha1.Import) *corev
 			},
 			Resources: corev1.ResourceRequirements{
 				Requests: corev1.ResourceList{
-					corev1.ResourceName(corev1.ResourceStorage): resource.MustParse("1Gi"),
+					corev1.ResourceName(corev1.ResourceStorage): resource.MustParse(size + "Gi"),
 				},
 			},
 		},
@@ -278,8 +312,19 @@ func (r *ImportReconciler) mirrorJob(m *mirroropenshiftiov1alpha1.Import) *batch
 						Image:   "memcached:1.4.36-alpine",
 						Name:    "memcached",
 						Command: []string{"memcached", "-m=64", "-o", "modern", "-v"},
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "data",
+							MountPath: "/data",
+						}},
 					}},
-					RestartPolicy: corev1.RestartPolicyOnFailure,
+					Volumes: []corev1.Volume{{
+						Name: "data",
+						VolumeSource: corev1.VolumeSource{
+							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+								ClaimName: "pvc-" + m.Name,
+							},
+						},
+					}}, RestartPolicy: corev1.RestartPolicyOnFailure,
 				},
 			},
 		},
