@@ -25,9 +25,10 @@ import (
 
 // ImportSpec defines the desired state of Import
 type ImportSpec struct {
-	SourceType string `json:"sourceType"`
-	Source     string `json:"source"`
-	PvcSize    int    `json:"pvcSize"`
+	SourceType     string `json:"sourceType"`
+	Source         string `json:"source"`
+	PvcSize        int    `json:"pvcSize"`
+	ImageConfigMap string `json:"imageConfigMap"`
 }
 
 // ImportStatus defines the observed state of Import

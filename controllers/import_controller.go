@@ -133,6 +133,23 @@ func (r *ImportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		return ctrl.Result{}, err
 	}
 
+	foundService := &corev1.Service{}
+	err = r.Get(ctx, types.NamespacedName{Name: "service-" + instance.Name, Namespace: instance.Namespace}, foundService)
+	if err != nil && errors.IsNotFound(err) {
+		// Define a new Job
+		service := r.serviceCreate(instance)
+		klog.Info("Creating a new Service ", service.Namespace, " ", service.Name)
+		err = r.Create(ctx, service)
+		if err != nil {
+			klog.Error(err, "Failed to create new Service ", service.Namespace, " ", service.Name)
+			return ctrl.Result{}, err
+		}
+		return ctrl.Result{Requeue: true}, nil
+	} else if err != nil {
+		klog.Error(err, "Failed to get Service")
+		return ctrl.Result{}, err
+	}
+
 	// Check if the deployment already exists, if not create a new one
 	foundDeploy := &appsv1.Deployment{}
 	err = r.Get(ctx, types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, foundDeploy)
@@ -294,6 +311,26 @@ func (r *ImportReconciler) pvcCreate(m *mirroropenshiftiov1alpha1.Import) *corev
 	return pvc
 }
 
+func (r *ImportReconciler) serviceCreate(m *mirroropenshiftiov1alpha1.Import) *corev1.Service {
+	service := &corev1.Service{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      m.Name,
+			Namespace: m.Namespace,
+		},
+		Spec: corev1.ServiceSpec{
+			Ports: []corev1.ServicePort{{
+				Port: 11211,
+				Name: "memcached",
+			}},
+			Selector: map[string]string{
+				"mirror": "registry",
+			},
+		},
+	}
+	ctrl.SetControllerReference(m, service, r.Scheme)
+	return service
+}
+
 func (r *ImportReconciler) mirrorJob(m *mirroropenshiftiov1alpha1.Import) *batchv1.Job {
 	mirrorJob := &batchv1.Job{
 		ObjectMeta: metav1.ObjectMeta{
@@ -311,11 +348,15 @@ func (r *ImportReconciler) mirrorJob(m *mirroropenshiftiov1alpha1.Import) *batch
 					Containers: []corev1.Container{{
 						Image:   "memcached:1.4.36-alpine",
 						Name:    "memcached",
-						Command: []string{"memcached", "-m=64", "-o", "modern", "-v"},
+						Command: []string{"/usr/local/bin/oc-mirror --config /opt/mirror/imageset-config.yaml docker://localhost:5000"},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "data",
 							MountPath: "/data",
-						}},
+						}, {
+							Name:      "mirror-config",
+							MountPath: "/opt/mirror",
+						},
+						},
 					}},
 					Volumes: []corev1.Volume{{
 						Name: "data",
