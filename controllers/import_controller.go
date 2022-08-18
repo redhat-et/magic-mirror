@@ -247,7 +247,7 @@ func (r *ImportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		r.Delete(ctx, foundMirror, client.PropagationPolicy(metav1.DeletePropagationForeground))
 	}
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{Requeue: true}, nil
 }
 
 func (r *ImportReconciler) deployRegistry(m *mirroropenshiftiov1alpha1.Import) *appsv1.Deployment {
