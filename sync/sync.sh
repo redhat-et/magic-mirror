@@ -5,7 +5,7 @@ if [ $SOURCETYPE == 'AWS' ]; then
     aws s3 sync s3://${SOURCE} /data
 elif [ $SOURCETYPE == 'HTTP' ]; then
     echo "Syncing from HTTP"
-    wget -r -np -nH -P /data ${SOURCE}
+    wget -r -np -nH -P /data ${SOURCE} -R "index.html*"
 elif [ $SOURCETYPE == 'SSH' ]; then
     echo "Syncing from SSH"
     rsync -avz -e "ssh -i ${{SSH_KEY}}" ${SOURCE} /data
