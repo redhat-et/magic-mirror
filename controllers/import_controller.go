@@ -19,6 +19,7 @@ package controllers
 import (
 	"context"
 	"strconv"
+	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
@@ -26,6 +27,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/wait"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -67,9 +69,6 @@ func (r *ImportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	err := r.Get(ctx, req.NamespacedName, instance)
 	if err != nil {
 		if errors.IsNotFound(err) {
-			// Request object not found, could have been deleted after reconcile request.
-			// Owned objects are automatically garbage collected. For additional cleanup logic use finalizers.
-			// Return and don't requeue
 			klog.Info("Import resource not found. Ignoring since object must be deleted")
 			return ctrl.Result{}, nil
 		}
@@ -80,116 +79,175 @@ func (r *ImportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	foundSync := &batchv1.Job{}
 	if !instance.Status.Synced {
-		err = r.Get(ctx, types.NamespacedName{Name: "sync-" + instance.Name, Namespace: instance.Namespace}, foundSync)
-		if err != nil && errors.IsNotFound(err) {
-			// Define a new Job
-			syncJob := r.syncJob(instance)
-			klog.Info("Creating a new Job ", syncJob.Namespace, " ", syncJob.Name)
-			err = r.Create(ctx, syncJob)
-			if err != nil {
-				klog.Error(err, "Failed to create new Job ", syncJob.Namespace, " ", syncJob.Name)
-				return ctrl.Result{}, err
+		if err := r.Get(ctx, types.NamespacedName{Name: "sync-" + instance.Name, Namespace: instance.Namespace}, foundSync); err != nil {
+			if errors.IsNotFound(err) {
+				// Define a new deployment
+				sync := r.syncJob(instance)
+				klog.Info("Creating a new job ", sync.Namespace, " ", sync.Name)
+				err = r.Create(ctx, sync)
+				if err != nil {
+					klog.Error(err, "Failed to create new job ", sync.Namespace, " ", sync.Name)
+					return ctrl.Result{}, err
+				}
+				if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
+					if err := r.Get(ctx, types.NamespacedName{Name: "sync-" + instance.Name, Namespace: instance.Namespace}, foundSync); err != nil {
+						if errors.IsNotFound(err) {
+							return false, nil
+						} else {
+							return false, err
+						}
+					}
+					return true, nil
+				}); err != nil {
+					return ctrl.Result{}, err
+				}
+				// Service created successfully - return and requeue
+				return ctrl.Result{Requeue: true}, nil
 			}
-			return ctrl.Result{Requeue: true}, nil
-		} else if err != nil {
-			klog.Error(err, "Failed to get Job")
-			return ctrl.Result{}, err
+			klog.Error(err, "Failed to get job")
 		}
 	}
 
 	foundMirror := &batchv1.Job{}
-	if instance.Status.Synced {
-		err = r.Get(ctx, types.NamespacedName{Name: "mirror-" + instance.Name, Namespace: instance.Namespace}, foundMirror)
-		if err != nil && errors.IsNotFound(err) {
-			// Define a new Job
-			mirrorJob := r.mirrorJob(instance)
-			klog.Info("Creating a new Job ", mirrorJob.Namespace, " ", mirrorJob.Name)
-			err = r.Create(ctx, mirrorJob)
-			if err != nil {
-				klog.Error(err, "Failed to create new Job ", mirrorJob.Namespace, " ", mirrorJob.Name)
-				return ctrl.Result{}, err
+	if instance.Status.Synced && !instance.Status.Mirrored {
+		if err := r.Get(ctx, types.NamespacedName{Name: "mirror-" + instance.Name, Namespace: instance.Namespace}, foundMirror); err != nil {
+			if errors.IsNotFound(err) {
+				// Define a new deployment
+				mirror := r.mirrorJob(instance)
+				klog.Info("Creating a new job ", mirror.Namespace, " ", mirror.Name)
+				err = r.Create(ctx, mirror)
+				if err != nil {
+					klog.Error(err, "Failed to create new job ", mirror.Namespace, " ", mirror.Name)
+					return ctrl.Result{}, err
+				}
+				if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
+					if err := r.Get(ctx, types.NamespacedName{Name: "mirror-" + instance.Name, Namespace: instance.Namespace}, foundMirror); err != nil {
+						if errors.IsNotFound(err) {
+							return false, nil
+						} else {
+							return false, err
+						}
+					}
+					return true, nil
+				}); err != nil {
+					return ctrl.Result{}, err
+				}
+				// Service created successfully - return and requeue
+				return ctrl.Result{Requeue: true}, nil
 			}
-			return ctrl.Result{Requeue: true}, nil
-		} else if err != nil {
-			klog.Error(err, "Failed to get Job")
-			return ctrl.Result{}, err
+			klog.Error(err, "Failed to get job")
 		}
-		return ctrl.Result{Requeue: true}, nil
 	}
 
 	foundPVC := &corev1.PersistentVolumeClaim{}
-	err = r.Get(ctx, types.NamespacedName{Name: "pvc-" + instance.Name, Namespace: instance.Namespace}, foundPVC)
-	if err != nil && errors.IsNotFound(err) {
-		// Define a new Job
-		pvc := r.pvcCreate(instance)
-		klog.Info("Creating a new PVC ", pvc.Namespace, " ", pvc.Name)
-		err = r.Create(ctx, pvc)
-		if err != nil {
-			klog.Error(err, "Failed to create new PVC ", pvc.Namespace, " ", pvc.Name)
-			return ctrl.Result{}, err
+	if err := r.Get(ctx, types.NamespacedName{Name: "pvc-" + instance.Name, Namespace: instance.Namespace}, foundPVC); err != nil {
+		if errors.IsNotFound(err) {
+			// Define a new deployment
+			pvc := r.pvcCreate(instance)
+			klog.Info("Creating a new PVC ", pvc.Namespace, " ", pvc.Name)
+			err = r.Create(ctx, pvc)
+			if err != nil {
+				klog.Error(err, "Failed to create new PVC ", pvc.Namespace, " ", pvc.Name)
+				return ctrl.Result{}, err
+			}
+			if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
+				if err := r.Get(ctx, types.NamespacedName{Name: "pvc-" + instance.Name, Namespace: instance.Namespace}, foundPVC); err != nil {
+					if errors.IsNotFound(err) {
+						return false, nil
+					} else {
+						return false, err
+					}
+				}
+				return true, nil
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+			// Service created successfully - return and requeue
+			return ctrl.Result{Requeue: true}, nil
 		}
-		return ctrl.Result{Requeue: true}, nil
-	} else if err != nil {
-		klog.Error(err, "Failed to get Job")
-		return ctrl.Result{}, err
+		klog.Error(err, "Failed to get PVC")
 	}
 
 	foundService := &corev1.Service{}
-	err = r.Get(ctx, types.NamespacedName{Name: "service-" + instance.Name, Namespace: instance.Namespace}, foundService)
-	if err != nil && errors.IsNotFound(err) {
-		// Define a new Job
-		service := r.serviceCreate(instance)
-		klog.Info("Creating a new Service ", service.Namespace, " ", service.Name)
-		err = r.Create(ctx, service)
-		if err != nil {
-			klog.Error(err, "Failed to create new Service ", service.Namespace, " ", service.Name)
-			return ctrl.Result{}, err
+	if err := r.Get(ctx, types.NamespacedName{Name: "service-" + instance.Name, Namespace: instance.Namespace}, foundService); err != nil {
+		if errors.IsNotFound(err) {
+			// Define a new deployment
+			svc := r.serviceCreate(instance)
+			klog.Info("Creating a new Service ", svc.Namespace, " ", svc.Name)
+			err = r.Create(ctx, svc)
+			if err != nil {
+				klog.Error(err, "Failed to create new Service ", svc.Namespace, " ", svc.Name)
+				return ctrl.Result{}, err
+			}
+			if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
+				if err := r.Get(ctx, types.NamespacedName{Name: "service-" + instance.Name, Namespace: instance.Namespace}, foundService); err != nil {
+					if errors.IsNotFound(err) {
+						return false, nil
+					} else {
+						return false, err
+					}
+				}
+				return true, nil
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+			// Service created successfully - return and requeue
+			return ctrl.Result{Requeue: true}, nil
 		}
-		return ctrl.Result{Requeue: true}, nil
-	} else if err != nil {
 		klog.Error(err, "Failed to get Service")
-		return ctrl.Result{}, err
 	}
 
 	// Check if the deployment already exists, if not create a new one
 	foundDeploy := &appsv1.Deployment{}
-	err = r.Get(ctx, types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, foundDeploy)
-	if err != nil && errors.IsNotFound(err) {
-		// Define a new deployment
-		dep := r.deployRegistry(instance)
-		klog.Info("Creating a new Deployment ", dep.Namespace, " ", dep.Name)
-		err = r.Create(ctx, dep)
-		if err != nil {
-			klog.Error(err, "Failed to create new Deployment ", dep.Namespace, "Deployment.Name", dep.Name)
-			return ctrl.Result{}, err
+	if err := r.Get(ctx, types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, foundDeploy); err != nil {
+		if errors.IsNotFound(err) {
+			// Define a new deployment
+			dep := r.deployRegistry(instance)
+			klog.Info("Creating a new Deployment ", dep.Namespace, " ", dep.Name)
+			err = r.Create(ctx, dep)
+			if err != nil {
+				klog.Error(err, "Failed to create new Deployment ", dep.Namespace, "Deployment.Name", dep.Name)
+				return ctrl.Result{}, err
+			}
+			if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
+				if err := r.Get(ctx, types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, foundDeploy); err != nil {
+					if errors.IsNotFound(err) {
+						return false, nil
+					} else {
+						return false, err
+					}
+				}
+				return true, nil
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+			// Service created successfully - return and requeue
+			return ctrl.Result{Requeue: true}, nil
 		}
-		// Deployment created successfully - return and requeue
-		return ctrl.Result{Requeue: true}, nil
-	} else if err != nil {
 		klog.Error(err, "Failed to get Deployment")
-		return ctrl.Result{}, err
 	}
 
-	// If the sync job is completed update the Synced bool to be true
 	if isJobComplete(foundSync) {
-		instance.Status.Synced = true
-		klog.Info("job cleanup")
-		r.Delete(ctx, foundSync, client.PropagationPolicy(metav1.DeletePropagationForeground))
-		err = r.Status().Update(ctx, instance)
-		if err != nil {
+		instance.Status.Synced = isJobComplete(foundSync)
+		if err := r.Status().Update(ctx, instance); err != nil {
 			klog.Error(err, "Failed to update Import status")
 			return ctrl.Result{}, err
 		}
-		return ctrl.Result{Requeue: true}, nil
-	} else {
-		instance.Status.Synced = false
-		err = r.Status().Update(ctx, instance)
-		if err != nil {
-			klog.Error(err, "Failed to update Import status")
-			return ctrl.Result{Requeue: true}, err
-		}
-		return ctrl.Result{Requeue: true}, nil
+		klog.Info("job cleanup")
+		r.Delete(ctx, foundSync, client.PropagationPolicy(metav1.DeletePropagationForeground))
 	}
+
+	if isJobComplete(foundMirror) {
+		instance.Status.Mirrored = isJobComplete(foundMirror)
+		if err := r.Status().Update(ctx, instance); err != nil {
+			klog.Error(err, "Failed to update Import status")
+			return ctrl.Result{}, err
+		}
+		klog.Info("job cleanup")
+		r.Delete(ctx, foundMirror, client.PropagationPolicy(metav1.DeletePropagationForeground))
+	}
+
+	return ctrl.Result{}, nil
 }
 
 func (r *ImportReconciler) deployRegistry(m *mirroropenshiftiov1alpha1.Import) *appsv1.Deployment {
@@ -214,16 +272,11 @@ func (r *ImportReconciler) deployRegistry(m *mirroropenshiftiov1alpha1.Import) *
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
-						Image:   "memcached:1.4.36-alpine",
-						Name:    "memcached",
-						Command: []string{"memcached", "-m=64", "-o", "modern", "-v"},
+						Image: "registry:2",
+						Name:  "registry",
 						Ports: []corev1.ContainerPort{{
-							ContainerPort: 11211,
-							Name:          "memcached",
-						}},
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:      "data",
-							MountPath: "/data",
+							ContainerPort: 5000,
+							Name:          "registry",
 						}},
 					}},
 					Volumes: []corev1.Volume{{
@@ -315,13 +368,13 @@ func (r *ImportReconciler) pvcCreate(m *mirroropenshiftiov1alpha1.Import) *corev
 func (r *ImportReconciler) serviceCreate(m *mirroropenshiftiov1alpha1.Import) *corev1.Service {
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      m.Name,
+			Name:      "service-" + m.Name,
 			Namespace: m.Namespace,
 		},
 		Spec: corev1.ServiceSpec{
 			Ports: []corev1.ServicePort{{
-				Port: 11211,
-				Name: "memcached",
+				Port: 5000,
+				Name: "registry",
 			}},
 			Selector: map[string]string{
 				"mirror": "registry",
@@ -347,15 +400,12 @@ func (r *ImportReconciler) mirrorJob(m *mirroropenshiftiov1alpha1.Import) *batch
 				},
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
-						Image:   "memcached:1.4.36-alpine",
-						Name:    "memcached",
-						Command: []string{"/usr/local/bin/oc-mirror --config /opt/mirror/imageset-config.yaml docker://localhost:5000"},
+						Image:   "quay.io/disco-mirror/oc-mirror:latest",
+						Name:    "mirror" + m.Name,
+						Command: []string{"/bin/sh", "-c", "/usr/bin/oc-mirror --from /data/oc-mirror/mirror_seq1_000000.tar docker://service-import-sample.default.svc.cluster.local:5000 --dest-skip-tls -v 1"},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "data",
 							MountPath: "/data",
-						}, {
-							Name:      "mirror-config",
-							MountPath: "/opt/mirror",
 						},
 						},
 					}},
@@ -366,7 +416,8 @@ func (r *ImportReconciler) mirrorJob(m *mirroropenshiftiov1alpha1.Import) *batch
 								ClaimName: "pvc-" + m.Name,
 							},
 						},
-					}}, RestartPolicy: corev1.RestartPolicyOnFailure,
+					},
+					}, RestartPolicy: corev1.RestartPolicyOnFailure,
 				},
 			},
 		},
@@ -377,6 +428,7 @@ func (r *ImportReconciler) mirrorJob(m *mirroropenshiftiov1alpha1.Import) *batch
 
 // Check to see if job is completed
 func isJobComplete(job *batchv1.Job) bool {
+	klog.Info("Checking if job is complete")
 	return job.Status.Succeeded == 1
 }
 

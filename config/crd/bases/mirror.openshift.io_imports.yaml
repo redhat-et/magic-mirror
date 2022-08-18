@@ -35,8 +35,6 @@ spec:
           spec:
             description: ImportSpec defines the desired state of Import
             properties:
-              imageConfigMap:
-                type: string
               pvcSize:
                 type: integer
               source:
@@ -44,7 +42,6 @@ spec:
               sourceType:
                 type: string
             required:
-            - imageConfigMap
             - pvcSize
             - source
             - sourceType
