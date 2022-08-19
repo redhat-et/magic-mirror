@@ -3,4 +3,7 @@ kind: Import
 metadata:
   name: import-sample
 spec:
-  # TODO(user): Add fields here
+  sourceType: HTTP 
+  source: http://3.82.195.52/oc-mirror 
+  pvcSize: 10
+  imageConfigMap: imageconfig

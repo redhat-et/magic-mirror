@@ -25,10 +25,9 @@ import (
 
 // ImportSpec defines the desired state of Import
 type ImportSpec struct {
-	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
-	// Important: Run "make" to regenerate code after modifying this file
-
-	// Foo is an example field of Import. Edit import_types.go to remove/update
+	SourceType string `json:"sourceType"`
+	Source     string `json:"source"`
+	PvcSize    int    `json:"pvcSize"`
 }
 
 // ImportStatus defines the observed state of Import
