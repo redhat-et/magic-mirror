@@ -402,7 +402,7 @@ func (r *ImportReconciler) mirrorJob(m *mirroropenshiftiov1alpha1.Import) *batch
 					Containers: []corev1.Container{{
 						Image:   "quay.io/disco-mirror/oc-mirror:latest",
 						Name:    "mirror" + m.Name,
-						Command: []string{"/bin/sh", "-c", "/usr/bin/oc-mirror --from /data/oc-mirror/mirror_seq1_000000.tar docker://service-import-sample.default.svc.cluster.local:5000 --dest-skip-tls -v 1"},
+						Command: []string{"/bin/sh", "-c", "/usr/bin/oc-mirror --from /data/ docker://service-" + m.Name + "." + m.Namespace + ".svc.cluster.local:5000 --dest-skip-tls -v 1"},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "data",
 							MountPath: "/data",
