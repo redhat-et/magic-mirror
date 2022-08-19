@@ -139,6 +139,35 @@ func (r *ImportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 	}
 
+	foundRegistryPVC := &corev1.PersistentVolumeClaim{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "registry-pvc-" + instance.Name, Namespace: instance.Namespace}, foundRegistryPVC); err != nil {
+		if errors.IsNotFound(err) {
+			// Define a new deployment
+			registryPVC := r.pvcCreateRegistry(instance)
+			klog.Info("Creating a new PVC ", registryPVC.Namespace, " ", registryPVC.Name)
+			err = r.Create(ctx, registryPVC)
+			if err != nil {
+				klog.Error(err, "Failed to create new PVC ", registryPVC.Namespace, " ", registryPVC.Name)
+				return ctrl.Result{}, err
+			}
+			if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
+				if err := r.Get(ctx, types.NamespacedName{Name: "registry-pvc-" + instance.Name, Namespace: instance.Namespace}, foundRegistryPVC); err != nil {
+					if errors.IsNotFound(err) {
+						return false, nil
+					} else {
+						return false, err
+					}
+				}
+				return true, nil
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+			// Service created successfully - return and requeue
+			return ctrl.Result{Requeue: true}, nil
+		}
+		klog.Error(err, "Failed to get PVC")
+	}
+
 	foundPVC := &corev1.PersistentVolumeClaim{}
 	if err := r.Get(ctx, types.NamespacedName{Name: "pvc-" + instance.Name, Namespace: instance.Namespace}, foundPVC); err != nil {
 		if errors.IsNotFound(err) {
@@ -274,16 +303,20 @@ func (r *ImportReconciler) deployRegistry(m *mirroropenshiftiov1alpha1.Import) *
 					Containers: []corev1.Container{{
 						Image: "registry:2",
 						Name:  "registry",
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "registry-data",
+							MountPath: "/var/lib/registry",
+						}},
 						Ports: []corev1.ContainerPort{{
 							ContainerPort: 5000,
 							Name:          "registry",
 						}},
 					}},
 					Volumes: []corev1.Volume{{
-						Name: "data",
+						Name: "registry-data",
 						VolumeSource: corev1.VolumeSource{
 							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: "pvc-" + m.Name,
+								ClaimName: "registry-pvc-" + m.Name,
 							},
 						},
 					}},
@@ -348,6 +381,29 @@ func (r *ImportReconciler) pvcCreate(m *mirroropenshiftiov1alpha1.Import) *corev
 	pvc := &corev1.PersistentVolumeClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "pvc-" + m.Name,
+			Namespace: m.Namespace,
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{
+				corev1.ReadWriteOnce,
+			},
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceName(corev1.ResourceStorage): resource.MustParse(size + "Gi"),
+				},
+			},
+		},
+	}
+	ctrl.SetControllerReference(m, pvc, r.Scheme)
+	return pvc
+}
+
+func (r *ImportReconciler) pvcCreateRegistry(m *mirroropenshiftiov1alpha1.Import) *corev1.PersistentVolumeClaim {
+	// make the pvc size a string
+	size := strconv.Itoa(m.Spec.PvcSize)
+	pvc := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "registry-pvc-" + m.Name,
 			Namespace: m.Namespace,
 		},
 		Spec: corev1.PersistentVolumeClaimSpec{
