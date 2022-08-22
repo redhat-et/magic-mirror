@@ -344,7 +344,7 @@ func (r *ImportReconciler) syncJob(m *mirroropenshiftiov1alpha1.Import) *batchv1
 				Spec: corev1.PodSpec{
 					Containers: []corev1.Container{{
 						Image:   "quay.io/disco-mirror/mirror-sync:latest",
-						Name:    "sync" + m.Name,
+						Name:    "sync-" + m.Name,
 						Command: []string{"/usr/local/bin/sync.sh"},
 						Env: []corev1.EnvVar{{
 							Name:  "SOURCETYPE",
