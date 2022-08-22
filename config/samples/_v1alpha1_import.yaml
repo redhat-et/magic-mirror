@@ -4,6 +4,5 @@ metadata:
   name: import-sample
 spec:
   sourceType: HTTP 
-  source: http://3.82.195.52/oc-mirror 
-  pvcSize: 10
-  imageConfigMap: imageconfig
+  source: http://3.92.65.35/oc-mirror 
+  pvcSize: 100

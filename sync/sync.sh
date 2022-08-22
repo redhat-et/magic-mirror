@@ -6,6 +6,7 @@ if [ $SOURCETYPE == 'AWS' ]; then
 elif [ $SOURCETYPE == 'HTTP' ]; then
     echo "Syncing from HTTP"
     wget -r -np -nH -P /data ${SOURCE} -R "index.html*" --exclude-directories "icons"
+    chmod 666 -R /data
     exit 0
 elif [ $SOURCETYPE == 'SSH' ]; then
     echo "Syncing from SSH"
