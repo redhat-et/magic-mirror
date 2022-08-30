@@ -32,8 +32,7 @@ type ImportSpec struct {
 
 // ImportStatus defines the observed state of Import
 type ImportStatus struct {
-	Synced   bool `json:"synced,omitempty"`
-	Mirrored bool `json:"mirrored,omitempty"`
+	Synced bool `json:"synced,omitempty"`
 }
 
 //+kubebuilder:object:root=true
