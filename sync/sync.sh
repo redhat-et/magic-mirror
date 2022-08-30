@@ -4,6 +4,7 @@ set -e -o pipefail
 
 if [ $SOURCETYPE == 'AWS' ]; then
     echo "Syncing from AWS"
+    aws s3 ls ${SOURCE}
     aws s3 sync s3://${SOURCE} /data
 elif [ $SOURCETYPE == 'HTTP' ]; then
     echo "Syncing from HTTP"
