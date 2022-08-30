@@ -10,12 +10,12 @@ if [ $SOURCETYPE == 'AWS' ]; then
     done
     aws s3 sync s3://${SOURCE} /data
 elif [ $SOURCETYPE == 'HTTP' ]; then
-    until $(curl --output /dev/null --silent --head --fail ${SOURCE}; do
+    until $(curl --output /dev/null --silent --head --fail ${SOURCE}); do
         printf '.'
         sleep 5
     done
     echo "Syncing from HTTP"
-    wget -r -np -nH -P /data ${SOURCE} -R "index.html*" --exclude-directories "icons"
+    wget -r -np -nH -l0 -P /data ${SOURCE} -R "index.html*" --exclude-directories "icons"
     chmod 666 -R /data
     exit 0
 elif [ $SOURCETYPE == 'SSH' ]; then
