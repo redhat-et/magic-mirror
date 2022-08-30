@@ -9,6 +9,7 @@ if [ $SOURCETYPE == 'AWS' ]; then
       sleep 30;
     done
     aws s3 sync s3://${SOURCE} /data
+    chmod 666 -R /data
 elif [ $SOURCETYPE == 'HTTP' ]; then
     until $(curl --output /dev/null --silent --head --fail ${SOURCE}); do
         printf '.'
