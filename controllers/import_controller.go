@@ -108,66 +108,6 @@ func (r *ImportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		}
 	}
 
-	foundMirror := &batchv1.Job{}
-	if instance.Status.Synced && !instance.Status.Mirrored {
-		if err := r.Get(ctx, types.NamespacedName{Name: "mirror-" + instance.Name, Namespace: instance.Namespace}, foundMirror); err != nil {
-			if errors.IsNotFound(err) {
-				// Define a new deployment
-				mirror := r.mirrorJob(instance)
-				klog.Info("Creating a new job ", mirror.Namespace, " ", mirror.Name)
-				err = r.Create(ctx, mirror)
-				if err != nil {
-					klog.Error(err, "Failed to create new job ", mirror.Namespace, " ", mirror.Name)
-					return ctrl.Result{}, err
-				}
-				if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
-					if err := r.Get(ctx, types.NamespacedName{Name: "mirror-" + instance.Name, Namespace: instance.Namespace}, foundMirror); err != nil {
-						if errors.IsNotFound(err) {
-							return false, nil
-						} else {
-							return false, err
-						}
-					}
-					return true, nil
-				}); err != nil {
-					return ctrl.Result{}, err
-				}
-				// Service created successfully - return and requeue
-				return ctrl.Result{Requeue: true}, nil
-			}
-			klog.Error(err, "Failed to get job")
-		}
-	}
-
-	foundRegistryPVC := &corev1.PersistentVolumeClaim{}
-	if err := r.Get(ctx, types.NamespacedName{Name: "registry-pvc-" + instance.Name, Namespace: instance.Namespace}, foundRegistryPVC); err != nil {
-		if errors.IsNotFound(err) {
-			// Define a new deployment
-			registryPVC := r.pvcCreateRegistry(instance)
-			klog.Info("Creating a new PVC ", registryPVC.Namespace, " ", registryPVC.Name)
-			err = r.Create(ctx, registryPVC)
-			if err != nil {
-				klog.Error(err, "Failed to create new PVC ", registryPVC.Namespace, " ", registryPVC.Name)
-				return ctrl.Result{}, err
-			}
-			if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
-				if err := r.Get(ctx, types.NamespacedName{Name: "registry-pvc-" + instance.Name, Namespace: instance.Namespace}, foundRegistryPVC); err != nil {
-					if errors.IsNotFound(err) {
-						return false, nil
-					} else {
-						return false, err
-					}
-				}
-				return true, nil
-			}); err != nil {
-				return ctrl.Result{}, err
-			}
-			// Service created successfully - return and requeue
-			return ctrl.Result{Requeue: true}, nil
-		}
-		klog.Error(err, "Failed to get PVC")
-	}
-
 	foundPVC := &corev1.PersistentVolumeClaim{}
 	if err := r.Get(ctx, types.NamespacedName{Name: "pvc-" + instance.Name, Namespace: instance.Namespace}, foundPVC); err != nil {
 		if errors.IsNotFound(err) {
@@ -266,16 +206,6 @@ func (r *ImportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		r.Delete(ctx, foundSync, client.PropagationPolicy(metav1.DeletePropagationForeground))
 	}
 
-	if isJobComplete(foundMirror) {
-		instance.Status.Mirrored = isJobComplete(foundMirror)
-		if err := r.Status().Update(ctx, instance); err != nil {
-			klog.Error(err, "Failed to update Import status")
-			return ctrl.Result{}, err
-		}
-		klog.Info("job cleanup")
-		r.Delete(ctx, foundMirror, client.PropagationPolicy(metav1.DeletePropagationForeground))
-	}
-
 	return ctrl.Result{Requeue: true}, nil
 }
 
@@ -316,7 +246,7 @@ func (r *ImportReconciler) deployRegistry(m *mirroropenshiftiov1alpha1.Import) *
 						Name: "registry-data",
 						VolumeSource: corev1.VolumeSource{
 							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: "registry-pvc-" + m.Name,
+								ClaimName: "pvc-" + m.Name,
 							},
 						},
 					}},
@@ -398,29 +328,6 @@ func (r *ImportReconciler) pvcCreate(m *mirroropenshiftiov1alpha1.Import) *corev
 	return pvc
 }
 
-func (r *ImportReconciler) pvcCreateRegistry(m *mirroropenshiftiov1alpha1.Import) *corev1.PersistentVolumeClaim {
-	// make the pvc size a string
-	size := strconv.Itoa(m.Spec.PvcSize)
-	pvc := &corev1.PersistentVolumeClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "registry-pvc-" + m.Name,
-			Namespace: m.Namespace,
-		},
-		Spec: corev1.PersistentVolumeClaimSpec{
-			AccessModes: []corev1.PersistentVolumeAccessMode{
-				corev1.ReadWriteOnce,
-			},
-			Resources: corev1.ResourceRequirements{
-				Requests: corev1.ResourceList{
-					corev1.ResourceName(corev1.ResourceStorage): resource.MustParse(size + "Gi"),
-				},
-			},
-		},
-	}
-	ctrl.SetControllerReference(m, pvc, r.Scheme)
-	return pvc
-}
-
 func (r *ImportReconciler) serviceCreate(m *mirroropenshiftiov1alpha1.Import) *corev1.Service {
 	service := &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{
@@ -439,47 +346,6 @@ func (r *ImportReconciler) serviceCreate(m *mirroropenshiftiov1alpha1.Import) *c
 	}
 	ctrl.SetControllerReference(m, service, r.Scheme)
 	return service
-}
-
-func (r *ImportReconciler) mirrorJob(m *mirroropenshiftiov1alpha1.Import) *batchv1.Job {
-	mirrorJob := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "mirror-" + m.Name,
-			Namespace: m.Namespace,
-		},
-		Spec: batchv1.JobSpec{
-			Template: corev1.PodTemplateSpec{
-				ObjectMeta: metav1.ObjectMeta{
-					Labels: map[string]string{
-						"mirror": "sync",
-					},
-				},
-				Spec: corev1.PodSpec{
-					Containers: []corev1.Container{{
-						Image:   "quay.io/disco-mirror/oc-mirror:latest",
-						Name:    "mirror" + m.Name,
-						Command: []string{"/bin/sh", "-c", "/usr/bin/oc-mirror --from /data/ docker://service-" + m.Name + "." + m.Namespace + ".svc.cluster.local:5000 --dest-skip-tls -v 1"},
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:      "data",
-							MountPath: "/data",
-						},
-						},
-					}},
-					Volumes: []corev1.Volume{{
-						Name: "data",
-						VolumeSource: corev1.VolumeSource{
-							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: "pvc-" + m.Name,
-							},
-						},
-					},
-					}, RestartPolicy: corev1.RestartPolicyOnFailure,
-				},
-			},
-		},
-	}
-	ctrl.SetControllerReference(m, mirrorJob, r.Scheme)
-	return mirrorJob
 }
 
 // Check to see if job is completed
