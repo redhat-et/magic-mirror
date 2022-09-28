@@ -28,6 +28,7 @@ type ImportSpec struct {
 	SourceType string `json:"sourceType"`
 	Source     string `json:"source"`
 	PvcSize    int    `json:"pvcSize"`
+	CredSecret string `json:"credSecret"`
 }
 
 // ImportStatus defines the observed state of Import

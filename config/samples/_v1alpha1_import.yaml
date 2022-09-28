@@ -3,6 +3,7 @@ kind: Import
 metadata:
   name: import-sample
 spec:
-  sourceType: HTTP 
-  source: http://3.92.65.35/oc-mirror 
+  sourceType: AWS
+  source: s3://rcook-mirror 
   pvcSize: 100
+  credSecret: aws-creds

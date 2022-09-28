@@ -4,11 +4,11 @@ set -e -o pipefail
 
 if [ $SOURCETYPE == 'AWS' ]; then
     echo "Syncing from AWS"
-    until aws s3 ls ${SOURCE}; do
+    until s5cmd ls ${SOURCE}; do
       echo "Cannot access ${SOURCE} sleeping and requeuing..."
       sleep 30;
     done
-    aws s3 sync s3://${SOURCE} /data
+    s5cmd sync ${SOURCE}/* /data
     chmod 666 -R /data
 elif [ $SOURCETYPE == 'HTTP' ]; then
     until $(curl --output /dev/null --silent --head --fail ${SOURCE}); do

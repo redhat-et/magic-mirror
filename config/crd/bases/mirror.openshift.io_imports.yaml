@@ -35,6 +35,8 @@ spec:
           spec:
             description: ImportSpec defines the desired state of Import
             properties:
+              credSecret:
+                type: string
               pvcSize:
                 type: integer
               source:
@@ -42,6 +44,7 @@ spec:
               sourceType:
                 type: string
             required:
+            - credSecret
             - pvcSize
             - source
             - sourceType
