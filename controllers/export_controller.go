@@ -256,7 +256,6 @@ func (r *ExportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			return ctrl.Result{}, err
 		}
 		klog.Info("Registry is online")
-		r.Delete(ctx, foundSync, client.PropagationPolicy(metav1.DeletePropagationForeground))
 	}
 
 	return ctrl.Result{Requeue: true}, nil
@@ -283,41 +282,12 @@ func (r *ExportReconciler) deployRegistry(m *mirroropenshiftiov1alpha1.Export) *
 					},
 				},
 				Spec: corev1.PodSpec{
-					SecurityContext: &corev1.PodSecurityContext{
-						RunAsNonRoot: &[]bool{true}[0],
-						// IMPORTANT: seccomProfile was introduced with Kubernetes 1.19
-						// If you are looking for to produce solutions to be supported
-						// on lower versions you must remove this option.
-						SeccompProfile: &corev1.SeccompProfile{
-							Type: corev1.SeccompProfileTypeRuntimeDefault,
-						},
-					},
 					Containers: []corev1.Container{{
 						Image: "registry:2",
-						SecurityContext: &corev1.SecurityContext{
-							// WARNING: Ensure that the image used defines an UserID in the Dockerfile
-							// otherwise the Pod will not run and will fail with "container has runAsNonRoot and image has non-numeric user"".
-							// If you want your workloads admitted in namespaces enforced with the restricted mode in OpenShift/OKD vendors
-							// then, you MUST ensure that the Dockerfile defines a User ID OR you MUST leave the "RunAsNonRoot" and
-							// "RunAsUser" fields empty.
-							RunAsNonRoot: &[]bool{true}[0],
-							// The memcached image does not use a non-zero numeric user as the default user.
-							// Due to RunAsNonRoot field being set to true, we need to force the user in the
-							// container to a non-zero numeric user. We do this using the RunAsUser field.
-							// However, if you are looking to provide solution for K8s vendors like OpenShift
-							// be aware that you cannot run under its restricted-v2 SCC if you set this value.
-							RunAsUser:                &[]int64{1001}[0],
-							AllowPrivilegeEscalation: &[]bool{false}[0],
-							Capabilities: &corev1.Capabilities{
-								Drop: []corev1.Capability{
-									"ALL",
-								},
-							},
-						},
-						Name: "registry",
+						Name:  "registry",
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "registry-data",
-							MountPath: "/var/lib/registry",
+							MountPath: "/var/www/html",
 						}},
 						Ports: []corev1.ContainerPort{{
 							ContainerPort: 5000,
@@ -364,6 +334,10 @@ func (r *ExportReconciler) syncJob(m *mirroropenshiftiov1alpha1.Export) *batchv1
 						Image:   "quay.io/disco-mirror/mirror-sync:latest",
 						Name:    "sync-" + m.Name,
 						Command: []string{"/usr/local/bin/export.sh"},
+						VolumeMounts: []corev1.VolumeMount{{
+							Name:      "data",
+							MountPath: "/opt/",
+						}},
 						Env: []corev1.EnvVar{{
 							Name:  "PROVIDERTYPE",
 							Value: m.Spec.ProviderType,
@@ -389,10 +363,6 @@ func (r *ExportReconciler) syncJob(m *mirroropenshiftiov1alpha1.Export) *batchv1
 									Key: "AWS_SECRET_ACCESS_KEY",
 								},
 							},
-						}},
-						VolumeMounts: []corev1.VolumeMount{{
-							Name:      "data",
-							MountPath: "/data",
 						}},
 					}},
 					Volumes: []corev1.Volume{{
@@ -429,13 +399,16 @@ func (r *ExportReconciler) mirrorJob(m *mirroropenshiftiov1alpha1.Export) *batch
 					Containers: []corev1.Container{{
 						Image:   "quay.io/disco-mirror/oc-mirror:latest",
 						Name:    "mirror" + m.Name,
-						Command: []string{"/bin/sh", "-c", "chown 1001:1001 -R /data && chmod 1666 -R /data && /usr/bin/oc-mirror --config /opt/imageset-configuration.yaml docker://service-" + m.Name + "." + m.Namespace + ".svc.cluster.local:5000 --dest-skip-tls -v 1"},
+						Command: []string{"/bin/sh", "-c", "/usr/bin/oc-mirror --config /opt/imageset-configuration.yaml docker://service-" + m.Name + "." + m.Namespace + ".svc.cluster.local:5000 --dest-skip-tls -v 1"},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "image-set-config",
 							MountPath: "/opt/",
 						}, {
 							Name:      "data",
 							MountPath: "/data",
+						}, {
+							Name:      "docker-config",
+							MountPath: "/root/.docker",
 						}},
 					}},
 					Volumes: []corev1.Volume{{
@@ -451,6 +424,12 @@ func (r *ExportReconciler) mirrorJob(m *mirroropenshiftiov1alpha1.Export) *batch
 						VolumeSource: corev1.VolumeSource{
 							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
 								ClaimName: "pvc-" + m.Name,
+							},
+						}}, {
+						Name: "docker-config",
+						VolumeSource: corev1.VolumeSource{
+							Secret: &corev1.SecretVolumeSource{
+								SecretName: m.Spec.DockerConfigSecret,
 							},
 						}}},
 					RestartPolicy: corev1.RestartPolicyOnFailure,

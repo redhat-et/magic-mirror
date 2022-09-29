@@ -30,6 +30,7 @@ type ExportSpec struct {
 	PvcSize               int    `json:"pvcSize"`
 	CredSecret            string `json:"credSecret"`
 	ImageSetConfiguration string `json:"imageSetConfiguration"`
+	DockerConfigSecret    string `json:"dockerConfigSecret"`
 }
 
 // ExportStatus defines the observed state of Export

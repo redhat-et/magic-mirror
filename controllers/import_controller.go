@@ -566,7 +566,6 @@ func defineRoute(route *routev1.Route) string {
 
 // Check to see if job is completed
 func isJobComplete(job *batchv1.Job) bool {
-	klog.Info("Checking if job is complete")
 	return job.Status.Succeeded == 1
 }
 

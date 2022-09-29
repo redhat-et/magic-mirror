@@ -37,6 +37,8 @@ spec:
             properties:
               credSecret:
                 type: string
+              dockerConfigSecret:
+                type: string
               imageSetConfiguration:
                 type: string
               providerType:
@@ -47,6 +49,7 @@ spec:
                 type: string
             required:
             - credSecret
+            - dockerConfigSecret
             - imageSetConfiguration
             - providerType
             - pvcSize

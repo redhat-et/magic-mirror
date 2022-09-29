@@ -1,10 +1,11 @@
 apiVersion: mirror.openshift.io/v1alpha1
 kind: Export
 metadata:
-  name: export-sample-final
+  name: export-sample-8r
 spec:
   providerType: AWS
   storageObject: s3://rcook-mirror
   pvcSize: 100
   credSecret: aws-creds
   imageSetConfiguration: imageset
+  dockerConfigSecret: pull-secret
