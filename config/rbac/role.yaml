@@ -68,6 +68,32 @@ rules:
 - apiGroups:
   - mirror.openshift.io
   resources:
+  - exports
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - mirror.openshift.io
+  resources:
+  - exports/finalizers
+  verbs:
+  - update
+- apiGroups:
+  - mirror.openshift.io
+  resources:
+  - exports/status
+  verbs:
+  - get
+  - patch
+  - update
+- apiGroups:
+  - mirror.openshift.io
+  resources:
   - imports
   verbs:
   - create

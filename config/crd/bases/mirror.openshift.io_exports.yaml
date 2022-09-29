@@ -5,20 +5,20 @@ metadata:
   annotations:
     controller-gen.kubebuilder.io/version: v0.9.0
   creationTimestamp: null
-  name: imports.mirror.openshift.io
+  name: exports.mirror.openshift.io
 spec:
   group: mirror.openshift.io
   names:
-    kind: Import
-    listKind: ImportList
-    plural: imports
-    singular: import
+    kind: Export
+    listKind: ExportList
+    plural: exports
+    singular: export
   scope: Namespaced
   versions:
   - name: v1alpha1
     schema:
       openAPIV3Schema:
-        description: Import is the Schema for the imports API
+        description: Export is the Schema for the exports API
         properties:
           apiVersion:
             description: 'APIVersion defines the versioned schema of this representation
@@ -33,9 +33,11 @@ spec:
           metadata:
             type: object
           spec:
-            description: ImportSpec defines the desired state of Import
+            description: ExportSpec defines the desired state of Export
             properties:
               credSecret:
+                type: string
+              imageSetConfiguration:
                 type: string
               providerType:
                 type: string
@@ -45,13 +47,18 @@ spec:
                 type: string
             required:
             - credSecret
+            - imageSetConfiguration
             - providerType
             - pvcSize
             - storageObject
             type: object
           status:
-            description: ImportStatus defines the observed state of Import
+            description: ExportStatus defines the observed state of Export
             properties:
+              mirrored:
+                type: boolean
+              registryOnline:
+                type: boolean
               synced:
                 type: boolean
             type: object

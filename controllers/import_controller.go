@@ -401,11 +401,11 @@ func (r *ImportReconciler) syncJob(m *mirroropenshiftiov1alpha1.Import) *batchv1
 						Name:    "sync-" + m.Name,
 						Command: []string{"/usr/local/bin/sync.sh"},
 						Env: []corev1.EnvVar{{
-							Name:  "SOURCETYPE",
-							Value: m.Spec.SourceType,
+							Name:  "PROVIDERTYPE",
+							Value: m.Spec.ProviderType,
 						}, {
-							Name:  "SOURCE",
-							Value: m.Spec.Source,
+							Name:  "STORAGEOBJECT",
+							Value: m.Spec.StorageObject,
 						}, {
 							Name: "AWS_ACCESS_KEY",
 							ValueFrom: &corev1.EnvVarSource{

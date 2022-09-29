@@ -23,40 +23,43 @@ import (
 // EDIT THIS FILE!  THIS IS SCAFFOLDING FOR YOU TO OWN!
 // NOTE: json tags are required.  Any new fields you add must have json tags for the fields to be serialized.
 
-// ImportSpec defines the desired state of Import
-type ImportSpec struct {
-	ProviderType  string `json:"providerType"`
-	StorageObject string `json:"storageObject"`
-	PvcSize       int    `json:"pvcSize"`
-	CredSecret    string `json:"credSecret"`
+// ExportSpec defines the desired state of Export
+type ExportSpec struct {
+	ProviderType          string `json:"providerType"`
+	StorageObject         string `json:"storageObject"`
+	PvcSize               int    `json:"pvcSize"`
+	CredSecret            string `json:"credSecret"`
+	ImageSetConfiguration string `json:"imageSetConfiguration"`
 }
 
-// ImportStatus defines the observed state of Import
-type ImportStatus struct {
-	Synced bool `json:"synced,omitempty"`
+// ExportStatus defines the observed state of Export
+type ExportStatus struct {
+	Synced         bool `json:"synced,omitempty"`
+	Mirrored       bool `json:"mirrored,omitempty"`
+	RegistryOnline bool `json:"registryOnline,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
 
-// Import is the Schema for the imports API
-type Import struct {
+// Export is the Schema for the exports API
+type Export struct {
 	metav1.TypeMeta   `json:",inline"`
 	metav1.ObjectMeta `json:"metadata,omitempty"`
 
-	Spec   ImportSpec   `json:"spec,omitempty"`
-	Status ImportStatus `json:"status,omitempty"`
+	Spec   ExportSpec   `json:"spec,omitempty"`
+	Status ExportStatus `json:"status,omitempty"`
 }
 
 //+kubebuilder:object:root=true
 
-// ImportList contains a list of Import
-type ImportList struct {
+// ExportList contains a list of Export
+type ExportList struct {
 	metav1.TypeMeta `json:",inline"`
 	metav1.ListMeta `json:"metadata,omitempty"`
-	Items           []Import `json:"items"`
+	Items           []Export `json:"items"`
 }
 
 func init() {
-	SchemeBuilder.Register(&Import{}, &ImportList{})
+	SchemeBuilder.Register(&Export{}, &ExportList{})
 }
