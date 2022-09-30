@@ -201,32 +201,34 @@ func (r *ExportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 
 	// Check if the deployment already exists, if not create a new one
 	foundDeploy := &appsv1.Deployment{}
-	if err := r.Get(ctx, types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, foundDeploy); err != nil {
-		if errors.IsNotFound(err) {
-			// Define a new deployment
-			dep := r.deployRegistry(instance)
-			klog.Info("Creating a new Deployment ", dep.Namespace, " ", dep.Name)
-			err = r.Create(ctx, dep)
-			if err != nil {
-				klog.Error(err, "Failed to create new Deployment ", dep.Namespace, "Deployment.Name", dep.Name)
-				return ctrl.Result{}, err
-			}
-			if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
-				if err := r.Get(ctx, types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, foundDeploy); err != nil {
-					if errors.IsNotFound(err) {
-						return false, nil
-					} else {
-						return false, err
-					}
+	if !instance.Status.Mirrored {
+		if err := r.Get(ctx, types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, foundDeploy); err != nil {
+			if errors.IsNotFound(err) {
+				// Define a new deployment
+				dep := r.deployRegistry(instance)
+				klog.Info("Creating a new Deployment ", dep.Namespace, " ", dep.Name)
+				err = r.Create(ctx, dep)
+				if err != nil {
+					klog.Error(err, "Failed to create new Deployment ", dep.Namespace, "Deployment.Name", dep.Name)
+					return ctrl.Result{}, err
 				}
-				return true, nil
-			}); err != nil {
-				return ctrl.Result{}, err
+				if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
+					if err := r.Get(ctx, types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, foundDeploy); err != nil {
+						if errors.IsNotFound(err) {
+							return false, nil
+						} else {
+							return false, err
+						}
+					}
+					return true, nil
+				}); err != nil {
+					return ctrl.Result{}, err
+				}
+				// Service created successfully - return and requeue
+				return ctrl.Result{Requeue: true}, nil
 			}
-			// Service created successfully - return and requeue
-			return ctrl.Result{Requeue: true}, nil
+			klog.Error(err, "Failed to get Deployment")
 		}
-		klog.Error(err, "Failed to get Deployment")
 	}
 
 	if isJobComplete(foundMirror) {
@@ -236,7 +238,8 @@ func (r *ExportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			return ctrl.Result{}, err
 		}
 		klog.Info("job cleanup")
-		r.Delete(ctx, foundSync, client.PropagationPolicy(metav1.DeletePropagationForeground))
+		r.Delete(ctx, foundMirror, client.PropagationPolicy(metav1.DeletePropagationForeground))
+		r.Delete(ctx, foundDeploy, client.PropagationPolicy(metav1.DeletePropagationForeground))
 	}
 
 	if isJobComplete(foundSync) {
@@ -287,7 +290,7 @@ func (r *ExportReconciler) deployRegistry(m *mirroropenshiftiov1alpha1.Export) *
 						Name:  "registry",
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "registry-data",
-							MountPath: "/var/www/html",
+							MountPath: "/var/lib/registry",
 						}},
 						Ports: []corev1.ContainerPort{{
 							ContainerPort: 5000,
@@ -336,7 +339,7 @@ func (r *ExportReconciler) syncJob(m *mirroropenshiftiov1alpha1.Export) *batchv1
 						Command: []string{"/usr/local/bin/export.sh"},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "data",
-							MountPath: "/opt/",
+							MountPath: "/data",
 						}},
 						Env: []corev1.EnvVar{{
 							Name:  "PROVIDERTYPE",

@@ -25,10 +25,11 @@ import (
 
 // ImportSpec defines the desired state of Import
 type ImportSpec struct {
-	ProviderType  string `json:"providerType"`
-	StorageObject string `json:"storageObject"`
-	PvcSize       int    `json:"pvcSize"`
-	CredSecret    string `json:"credSecret"`
+	ProviderType      string `json:"providerType"`
+	StorageObject     string `json:"storageObject"`
+	PvcSize           int    `json:"pvcSize"`
+	CertificateSecret string `json:"certificateSecret"`
+	CredSecret        string `json:"credSecret"`
 }
 
 // ImportStatus defines the observed state of Import

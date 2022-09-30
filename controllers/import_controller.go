@@ -236,35 +236,6 @@ func (r *ImportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		klog.Error(err, "Failed to get Service")
 	}
 
-	foundSecret := &corev1.Secret{}
-	if err := r.Get(ctx, types.NamespacedName{Name: "secret-" + instance.Name, Namespace: instance.Namespace}, foundSecret); err != nil {
-		if errors.IsNotFound(err) {
-			// Define a new Secret
-			secret := r.secretCreate(instance)
-			klog.Info("Creating a new Secret ", secret.Namespace, " ", secret.Name)
-			err = r.Create(ctx, secret)
-			if err != nil {
-				klog.Error(err, "Failed to create new Secret ", secret.Namespace, " ", secret.Name)
-				return ctrl.Result{}, err
-			}
-			if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
-				if err := r.Get(ctx, types.NamespacedName{Name: "secret-" + instance.Name, Namespace: instance.Namespace}, foundSecret); err != nil {
-					if errors.IsNotFound(err) {
-						return false, nil
-					} else {
-						return false, err
-					}
-				}
-				return true, nil
-			}); err != nil {
-				return ctrl.Result{}, err
-			}
-			// Service created successfully - return and requeue
-			return ctrl.Result{Requeue: true}, nil
-		}
-		klog.Error(err, "Failed to get Secret")
-	}
-
 	// Check if the deployment already exists, if not create a new one
 	foundDeploy := &appsv1.Deployment{}
 	if instance.Status.Synced {
@@ -352,7 +323,7 @@ func (r *ImportReconciler) deployRegistry(m *mirroropenshiftiov1alpha1.Import) *
 							Name:      "registry-data",
 							MountPath: "/var/lib/registry",
 						}, {
-							Name:      "secret-" + m.Name,
+							Name:      "registry-certs",
 							MountPath: "/certs",
 						}},
 						Ports: []corev1.ContainerPort{{
@@ -368,10 +339,10 @@ func (r *ImportReconciler) deployRegistry(m *mirroropenshiftiov1alpha1.Import) *
 							},
 						},
 					}, {
-						Name: "secret-" + m.Name,
+						Name: "registry-certs",
 						VolumeSource: corev1.VolumeSource{
 							Secret: &corev1.SecretVolumeSource{
-								SecretName: "secret-" + m.Name,
+								SecretName: m.Spec.CertificateSecret,
 							},
 						}}},
 				},
@@ -399,7 +370,7 @@ func (r *ImportReconciler) syncJob(m *mirroropenshiftiov1alpha1.Import) *batchv1
 					Containers: []corev1.Container{{
 						Image:   "quay.io/disco-mirror/mirror-sync:latest",
 						Name:    "sync-" + m.Name,
-						Command: []string{"/usr/local/bin/sync.sh"},
+						Command: []string{"/usr/local/bin/import.sh"},
 						Env: []corev1.EnvVar{{
 							Name:  "PROVIDERTYPE",
 							Value: m.Spec.ProviderType,
@@ -475,7 +446,7 @@ func (r *ImportReconciler) createRoute(m *mirroropenshiftiov1alpha1.Import) *rou
 	// Define a new Route object
 	route := &routev1.Route{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      "sync-" + m.Name,
+			Name:      m.Name,
 			Namespace: m.Namespace,
 		},
 		Spec: routev1.RouteSpec{
@@ -513,21 +484,6 @@ func (r *ImportReconciler) serviceCreate(m *mirroropenshiftiov1alpha1.Import) *c
 	}
 	ctrl.SetControllerReference(m, service, r.Scheme)
 	return service
-}
-
-func (r *ImportReconciler) secretCreate(m *mirroropenshiftiov1alpha1.Import) *corev1.Secret {
-	secret := &corev1.Secret{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "secret-" + m.Name,
-			Namespace: m.Namespace,
-		},
-		Data: map[string][]byte{
-			"ssl.crt": []byte("-----BEGIN CERTIFICATE-----MIIEBDCCAuygAwIBAgIUOf4GkyYm/WhipO0535wU7SO5IN0wDQYJKoZIhvcNAQELBQAwgY8xCzAJBgNVBAYTAlVTMRcwFQYDVQQIDA5Ob3J0aCBDYXJvbGluYTEPMA0GA1UEBwwGRHVyaGFtMRwwGgYDVQQKDBNEZWZhdWx0IENvbXBhbnkgTHRkMTgwNgYDVQQDDC9zZXJ2aWNlLWltcG9ydC1zYW1wbGUuZGVmYXVsdC5zdmMuY2x1c3Rlci5sb2NhbDAeFw0yMjA5MjYxODM2NTlaFw0yMzA5MTcxODM2NTlaMIGUMQswCQYDVQQGEwJVUzEXMBUGA1UECAwOTm9ydGggQ2Fyb2xpbmExDzANBgNVBAcMBkR1cmhhbTEcMBoGA1UECgwTRGVmYXVsdCBDb21wYW55IEx0ZDE9MDsGA1UEAww0c2VydmljZS1pbXBvcnQtc2FtcGxlLmRlZmF1bHQuc3ZjLmNsdXN0ZXIubG9jYWw6ODQ0MzCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBAK9PNn9NAfQvMuaKtPs5P5yWtxnLeapCYhvTR/+eU71rsTeCAJ/rFlyq/s6U0UNXiQYIbYGeiaWRx9dY1iQfqf+MdaU/sROEi0PSFFP6YEqZIa9PnqHTvx0pWH5z/AmLGvsqGly4APvxLU5i4RXeEkkucSYNfj/qUmJp+wmevEQ3stB8QFzX7DzZuAI1gIQifTAEsPVAaJj6a7kl/nlkauFlG+o2CS8C4/MfGQLKUghAQbjWvJZdXlLLqR5widS733Yf2taAjsPiT3ohEllvBYzyDgU3m5BapJbsUu0yzCs9wpHpAwgf7N3q/2kYGGIlPtzCE4qFyf7sazt2MtPQMQUCAwEAAaNRME8wCQYDVR0TBAIwADALBgNVHQ8EBAMCBeAwNQYDVR0RBC4wLIIkcmVnZ2llLm9jdG8tZW1lcmdpbmcucmVkaGF0YWljb2UuY29thwQDXxi9MA0GCSqGSIb3DQEBCwUAA4IBAQCHqYLqNavK4TCyn1F3Ai2ydYBf6z3YYBAj7fxp7claWJFy/qp5WV4/CPnUo9ollQhWH5IQEDmL3n6fV2VOyJZN/kI2mpF2Ysad2GTy6Nbc6FSQ8UKZPoNjzmzDFPfRRUkejmB/hdfH1k/u0AVG2///hESU4492PT9ozdKE0UEokD1R639smrTeizqgR9s9iNlC5fWkPTTXWSrA/hi8aWm/r/L0QV/f7jtdqgO2cUayaQkAgSz/aaBQDRi590AsiaI6L3XufDtUfWmWFXsgdkRJGiExbGFYQqpddxmaa8FfaByBfeocqwv1UvZ6XBqg4ZqqESxSkso+DeASHD7S0a7X-----END CERTIFICATE-----"),
-			"ssl.key": []byte("-----BEGIN RSA PRIVATE KEY-----MIIEowIBAAKCAQEAr082f00B9C8y5oq0+zk/nJa3Gct5qkJiG9NH/55TvWuxN4IAn+sWXKr+zpTRQ1eJBghtgZ6JpZHH11jWJB+p/4x1pT+xE4SLQ9IUU/pgSpkhr0+eodO/HSlYfnP8CYsa+yoaXLgA+/EtTmLhFd4SSS5xJg1+P+pSYmn7CZ68RDey0HxAXNfsPNm4AjWAhCJ9MASw9UBomPpruSX+eWRq4WUb6jYJLwLj8x8ZAspSCEBBuNa8ll1eUsupHnCJ1Lvfdh/a1oCOw+JPeiESWW8FjPIOBTebkFqkluxS7TLMKz3CkekDCB/s3er/aRgYYiU+3MITioXJ/uxrO3Yy09AxBQIDAQABAoIBABsDtt8pC7sIJuzVxQvNh5rmsrJ743S0JBArn7WpPTg8RyPJmbUK8fg3tWo6DoE1FP1kARPvTUDBVS0/GEiaxISHrX1Ycj4St68syUsjkwEL1eABAe3oBlRFEcjysIz77Z10oHlXNXedc6DXpd3Lyb+TM4Zsn97Tifx2XmPeHR7ZwOgk4llzzVOUyYDmXuY8dy2qIzaarqcOFZtSBeLWVCed06YnX94Z5WcDFDaFPqKj0NqRs+9uCWdyIhO88R5PDVxEK4eBgwE9DJ4D/2bvpQm115w0n7k9cvFD0/u5fifJfe0Y8/ZTSUzNM4NeBp2rBFoA0jsDrzXhc00m1zHl4UECgYEA5bUVd5zlEtg25w9g0/N+EHdoBucXk5d09HGNtp9mPiA9T70g+driXK8czR8W+brvsCaYjjLmg2TKfbVbXLamj0xWQIhwZqRW51dNEanJKXJhgbWlY0wCf0yZp/m+bYzhu68Z7TI+LxRD1bIWNFzI8Of6/DaEdbE2I2tLhTCJTZUCgYEAw2AnRbZJa/oXUXnkxpvC4jxrQxgS2RGF9MXENJCAI7tM4GE5guIC++YhFv8D5nZeZY45QC4hbuE9ialXkau6uVqLriLXihQI42GnH9EBjEVH470MOf6A2gLLMjmO1kjKQHbMufAplw1Y+oAjbYwZnFW7wRHLr15MhQqKvguWGbECgYAoV7NbfIym0J5j2kmRL/R2A+KbQ77aRwFdZQwUhM46HwNlm7vM5epXiNGwHMO2PGSYNU8ZukrNzMfbaByRneqGxEtprgy/miFBJA3/CiiwRMxnMXXIiLLvlI5v9+a/6rxCcDBHfkl5jz+SqmJH8/u+g5+K6DA/U05EzjVHQQz8OQKBgAhvBSL4PHEhyZHlzh9Yp+/2JbcuudmO7RZk1xRhzHY+ZpIlAEOLGA/hnjoM5hEzuN1vZz9C/oR3yp0/px0NqbDInND2hhFazgtqsrkn34Y7k1/cUEPMnalLh5Pych0D5V8lAa9hE5qGo/mkQGNBMfXSqZkq+HzoeCsiCl0ryN3xAoGBANKOXhyGJ/v8YoX1jTwPwpRHnPI7uBgiq7m43aN/+pLz3PHFvnOTNIlpyniS0b1voIQIqveYWKhqLBnVZj5ahL9iAQaVR3ya/syUjMPWr8LBQna+7FSLrl3S0V5beJ6YXrWdnEGgzhHK/BaVnhdDXvnrzqXi5rGrjboXO9pncVU2-----END RSA PRIVATE KEY-----"),
-		},
-	}
-	ctrl.SetControllerReference(m, secret, r.Scheme)
-	return secret
 }
 
 func (r *ImportReconciler) createImageSetConfig(m *mirroropenshiftiov1alpha1.Import, route string) *imagesetConfig.ImageContentSourcePolicy {

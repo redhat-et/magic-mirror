@@ -35,6 +35,8 @@ spec:
           spec:
             description: ImportSpec defines the desired state of Import
             properties:
+              certificateSecret:
+                type: string
               credSecret:
                 type: string
               providerType:
@@ -44,6 +46,7 @@ spec:
               storageObject:
                 type: string
             required:
+            - certificateSecret
             - credSecret
             - providerType
             - pvcSize
