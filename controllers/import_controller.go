@@ -119,7 +119,7 @@ func (r *ImportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	foundRoute := &routev1.Route{}
-	if err := r.Get(ctx, types.NamespacedName{Name: "sync-" + instance.Name, Namespace: instance.Namespace}, foundRoute); err != nil {
+	if err := r.Get(ctx, types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, foundRoute); err != nil {
 		if errors.IsNotFound(err) {
 			// Define a new route
 			route := r.createRoute(instance)
@@ -130,7 +130,7 @@ func (r *ImportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 				return ctrl.Result{}, err
 			}
 			if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
-				if err := r.Get(ctx, types.NamespacedName{Name: "sync-" + instance.Name, Namespace: instance.Namespace}, foundRoute); err != nil {
+				if err := r.Get(ctx, types.NamespacedName{Name: instance.Name, Namespace: instance.Namespace}, foundRoute); err != nil {
 					if errors.IsNotFound(err) {
 						return false, nil
 					} else {

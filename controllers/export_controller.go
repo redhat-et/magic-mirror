@@ -24,6 +24,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -53,7 +54,17 @@ type ExportReconciler struct {
 //+kubebuilder:rbac:groups=core,resources=services,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=operator.openshift.io,resources=imagecontentsourcepolicies,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=security.openshift.io,resources=securitycontextconstraints,verbs=get;use;list
+//+kubebuilder:rbac:groups=authorization.openshift.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=authorization.openshift.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=roles,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=rolebindings,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=authorization.openshift.io,resources=clusterroles,verbs=get;use
+//+kubebuilder:rbac:groups=authorization.openshift.io,resources=clusterrolebindings,verbs=get;use
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;use
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;use
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -199,6 +210,64 @@ func (r *ExportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 		klog.Error(err, "Failed to get PVC")
 	}
 
+	foundSA := &corev1.ServiceAccount{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "sa-" + instance.Name, Namespace: instance.Namespace}, foundSA); err != nil {
+		if errors.IsNotFound(err) {
+			// Define a new deployment
+			sa := r.serviceAccountCreate(instance)
+			klog.Info("Creating a new SA ", sa.Namespace, " ", sa.Name)
+			err = r.Create(ctx, sa)
+			if err != nil {
+				klog.Error(err, "Failed to create new SA ", sa.Namespace, " ", sa.Name)
+				return ctrl.Result{}, err
+			}
+			if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
+				if err := r.Get(ctx, types.NamespacedName{Name: "sa-" + instance.Name, Namespace: instance.Namespace}, foundSA); err != nil {
+					if errors.IsNotFound(err) {
+						return false, nil
+					} else {
+						return false, err
+					}
+				}
+				return true, nil
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+			// Service created successfully - return and requeue
+			return ctrl.Result{Requeue: true}, nil
+		}
+		klog.Error(err, "Failed to get SA")
+	}
+
+	foundRoleBinding := &rbacv1.RoleBinding{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "role-" + instance.Name, Namespace: instance.Namespace}, foundRoleBinding); err != nil {
+		if errors.IsNotFound(err) {
+			// Define a new deployment
+			roleBinding := r.ensureRoleBinding(instance)
+			klog.Info("Creating a new Role Binding ", roleBinding.Namespace, " ", roleBinding.Name)
+			err = r.Create(ctx, roleBinding)
+			if err != nil {
+				klog.Error(err, "Failed to create new Role Binding", roleBinding.Namespace, " ", roleBinding.Name)
+				return ctrl.Result{}, err
+			}
+			if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
+				if err := r.Get(ctx, types.NamespacedName{Name: "role-" + instance.Name, Namespace: instance.Namespace}, foundRoleBinding); err != nil {
+					if errors.IsNotFound(err) {
+						return false, nil
+					} else {
+						return false, err
+					}
+				}
+				return true, nil
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+			// Role created successfully - return and requeue
+			return ctrl.Result{Requeue: true}, nil
+		}
+		klog.Error(err, "Failed to get Role Binding")
+	}
+
 	// Check if the deployment already exists, if not create a new one
 	foundDeploy := &appsv1.Deployment{}
 	if !instance.Status.Mirrored {
@@ -285,6 +354,7 @@ func (r *ExportReconciler) deployRegistry(m *mirroropenshiftiov1alpha1.Export) *
 					},
 				},
 				Spec: corev1.PodSpec{
+					ServiceAccountName: "sa-" + m.Name,
 					Containers: []corev1.Container{{
 						Image: "registry:2",
 						Name:  "registry",
@@ -402,13 +472,10 @@ func (r *ExportReconciler) mirrorJob(m *mirroropenshiftiov1alpha1.Export) *batch
 					Containers: []corev1.Container{{
 						Image:   "quay.io/disco-mirror/oc-mirror:latest",
 						Name:    "mirror" + m.Name,
-						Command: []string{"/bin/sh", "-c", "/usr/bin/oc-mirror --config /opt/imageset-configuration.yaml docker://service-" + m.Name + "." + m.Namespace + ".svc.cluster.local:5000 --dest-skip-tls -v 1"},
+						Command: []string{"/bin/sh", "-c", "/usr/bin/oc-mirror --config /opt/imageset-configuration.yaml docker://service-" + m.Name + "." + m.Namespace + ".svc.cluster.local:5000/ocp4/openshift4 --dest-skip-tls -v 1"},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "image-set-config",
 							MountPath: "/opt/",
-						}, {
-							Name:      "data",
-							MountPath: "/data",
 						}, {
 							Name:      "docker-config",
 							MountPath: "/root/.docker",
@@ -423,12 +490,6 @@ func (r *ExportReconciler) mirrorJob(m *mirroropenshiftiov1alpha1.Export) *batch
 								}},
 						},
 					}, {
-						Name: "data",
-						VolumeSource: corev1.VolumeSource{
-							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
-								ClaimName: "pvc-" + m.Name,
-							},
-						}}, {
 						Name: "docker-config",
 						VolumeSource: corev1.VolumeSource{
 							Secret: &corev1.SecretVolumeSource{
@@ -462,6 +523,41 @@ func (r *ExportReconciler) serviceCreate(m *mirroropenshiftiov1alpha1.Export) *c
 	}
 	ctrl.SetControllerReference(m, service, r.Scheme)
 	return service
+}
+
+func (r *ExportReconciler) serviceAccountCreate(m *mirroropenshiftiov1alpha1.Export) *corev1.ServiceAccount {
+	serviceAccount := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "sa-" + m.Name,
+			Namespace: m.Namespace,
+		},
+	}
+	ctrl.SetControllerReference(m, serviceAccount, r.Scheme)
+	return serviceAccount
+}
+
+func (r *ExportReconciler) ensureRoleBinding(m *mirroropenshiftiov1alpha1.Export) *rbacv1.RoleBinding {
+	role := &rbacv1.RoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "role-" + m.Name,
+			Namespace: m.Namespace,
+		},
+		Subjects: []rbacv1.Subject{
+			{
+				Kind:      "ServiceAccount",
+				Name:      "sa-" + m.Name,
+				APIGroup:  "",
+				Namespace: m.Namespace,
+			},
+		},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "ClusterRole",
+			Name:     "system:openshift:scc:anyuid",
+			APIGroup: "",
+		},
+	}
+	ctrl.SetControllerReference(m, role, r.Scheme)
+	return role
 }
 
 func (r *ExportReconciler) pvcCreate(m *mirroropenshiftiov1alpha1.Export) *corev1.PersistentVolumeClaim {
