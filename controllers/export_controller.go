@@ -472,13 +472,16 @@ func (r *ExportReconciler) mirrorJob(m *mirroropenshiftiov1alpha1.Export) *batch
 					Containers: []corev1.Container{{
 						Image:   "quay.io/disco-mirror/oc-mirror:latest",
 						Name:    "mirror" + m.Name,
-						Command: []string{"/bin/sh", "-c", "/usr/bin/oc-mirror --config /opt/imageset-configuration.yaml docker://service-" + m.Name + "." + m.Namespace + ".svc.cluster.local:5000/ocp4/openshift4 --dest-skip-tls -v 1"},
+						Command: []string{"/bin/sh", "-c", "/usr/bin/oc-mirror --config /opt/imageset-configuration.yaml docker://service-" + m.Name + "." + m.Namespace + ".svc.cluster.local:5000/ocp4/openshift4 --dest-skip-tls -v 1 && cp -rp cp -rp oc-mirror-workspace/results-*/release-signatures/signature-sha256-* /configmap/"},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "image-set-config",
 							MountPath: "/opt/",
 						}, {
 							Name:      "docker-config",
 							MountPath: "/root/.docker",
+						}, {
+							Name:      "configmap",
+							MountPath: "/configmap",
 						}},
 					}},
 					Volumes: []corev1.Volume{{
@@ -494,6 +497,12 @@ func (r *ExportReconciler) mirrorJob(m *mirroropenshiftiov1alpha1.Export) *batch
 						VolumeSource: corev1.VolumeSource{
 							Secret: &corev1.SecretVolumeSource{
 								SecretName: m.Spec.DockerConfigSecret,
+							},
+						}}, {
+						Name: "configmap",
+						VolumeSource: corev1.VolumeSource{
+							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+								ClaimName: "pvc-cm-" + m.Name,
 							},
 						}}},
 					RestartPolicy: corev1.RestartPolicyOnFailure,
@@ -581,6 +590,28 @@ func (r *ExportReconciler) pvcCreate(m *mirroropenshiftiov1alpha1.Export) *corev
 	}
 	ctrl.SetControllerReference(m, pvc, r.Scheme)
 	return pvc
+}
+
+func (r *ExportReconciler) pvcCMCreate(m *mirroropenshiftiov1alpha1.Export) *corev1.PersistentVolumeClaim {
+	// make the pvc size a string
+	cmPVC := &corev1.PersistentVolumeClaim{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "pvc-cm-" + m.Name,
+			Namespace: m.Namespace,
+		},
+		Spec: corev1.PersistentVolumeClaimSpec{
+			AccessModes: []corev1.PersistentVolumeAccessMode{
+				corev1.ReadWriteOnce,
+			},
+			Resources: corev1.ResourceRequirements{
+				Requests: corev1.ResourceList{
+					corev1.ResourceName(corev1.ResourceStorage): resource.MustParse("512Mi"),
+				},
+			},
+		},
+	}
+	ctrl.SetControllerReference(m, cmPVC, r.Scheme)
+	return cmPVC
 }
 
 func isDeploymentReady(deployment *appsv1.Deployment) bool {
