@@ -24,6 +24,7 @@ import (
 	appsv1 "k8s.io/api/apps/v1"
 	batchv1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
+	rbacv1 "k8s.io/api/rbac/v1"
 	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -62,6 +63,12 @@ type ImportReconciler struct {
 //+kubebuilder:rbac:groups=core,resources=secrets,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=route.openshift.io,resources=routes,verbs=get;list;watch;create;update;patch;delete
 //+kubebuilder:rbac:groups=operator.openshift.io,resources=imagecontentsourcepolicies,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=authorization.openshift.io,resources=clusterroles,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=authorization.openshift.io,resources=clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterroles,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=rbac.authorization.k8s.io,resources=clusterrolebindings,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=serviceaccounts,verbs=get;list;watch;create;update;patch;delete
+//+kubebuilder:rbac:groups=core,resources=configmaps,verbs=get;list;watch;create;update;patch;delete
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
@@ -116,6 +123,93 @@ func (r *ImportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			}
 			klog.Error(err, "Failed to get job")
 		}
+	}
+
+	foundSA := &corev1.ServiceAccount{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "kubectl-sa-" + instance.Name, Namespace: instance.Namespace}, foundSA); err != nil {
+		if errors.IsNotFound(err) {
+			// Define a new route
+			sa := r.createCMSA(instance)
+			klog.Info("Creating a new Service account ", sa.Namespace, " ", sa.Name)
+			err = r.Create(ctx, sa)
+			if err != nil {
+				klog.Error(err, "Failed to create new Service account ", sa.Namespace, " ", sa.Name)
+				return ctrl.Result{}, err
+			}
+			if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
+				if err := r.Get(ctx, types.NamespacedName{Name: "kubectl-sa-" + instance.Name, Namespace: instance.Namespace}, foundSA); err != nil {
+					if errors.IsNotFound(err) {
+						return false, nil
+					} else {
+						return false, err
+					}
+				}
+				return true, nil
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+			// Service created successfully - return and requeue
+			return ctrl.Result{Requeue: true}, nil
+		}
+		klog.Error(err, "Failed to get Service account")
+	}
+
+	foundClusterRole := &rbacv1.ClusterRole{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "kubectl-sa-" + instance.Name}, foundClusterRole); err != nil {
+		if errors.IsNotFound(err) {
+			// Define a new cluster role
+			clusterRole := r.createClusterRole(instance)
+			klog.Info("Creating a new Cluster Role ", clusterRole.Name)
+			err = r.Create(ctx, clusterRole)
+			if err != nil {
+				klog.Error(err, "Failed to create new Cluster Role ", clusterRole.Name)
+				return ctrl.Result{}, err
+			}
+			if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
+				if err := r.Get(ctx, types.NamespacedName{Name: "kubectl-sa-" + instance.Name}, foundClusterRole); err != nil {
+					if errors.IsNotFound(err) {
+						return false, nil
+					} else {
+						return false, err
+					}
+				}
+				return true, nil
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+			// Cluster Role created successfully - return and requeue
+			return ctrl.Result{Requeue: true}, nil
+		}
+		klog.Error(err, "Failed to get Cluster Role")
+	}
+
+	foundClusterRoleBinding := &rbacv1.ClusterRoleBinding{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "kubectl-sa-" + instance.Name}, foundClusterRoleBinding); err != nil {
+		if errors.IsNotFound(err) {
+			// Define a new cluster role binding
+			clusterRoleBinding := r.createClusterRoleBinding(instance)
+			klog.Info("Creating a new Cluster Role Binding ", clusterRoleBinding.Name)
+			err = r.Create(ctx, clusterRoleBinding)
+			if err != nil {
+				klog.Error(err, "Failed to create new Cluster Role Binding ", clusterRoleBinding.Name)
+				return ctrl.Result{}, err
+			}
+			if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
+				if err := r.Get(ctx, types.NamespacedName{Name: "kubectl-sa-" + instance.Name}, foundClusterRoleBinding); err != nil {
+					if errors.IsNotFound(err) {
+						return false, nil
+					} else {
+						return false, err
+					}
+				}
+				return true, nil
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+			// Cluster Role Binding created successfully - return and requeue
+			return ctrl.Result{Requeue: true}, nil
+		}
+		klog.Error(err, "Failed to get Cluster Role Binding")
 	}
 
 	foundRoute := &routev1.Route{}
@@ -367,6 +461,7 @@ func (r *ImportReconciler) syncJob(m *mirroropenshiftiov1alpha1.Import) *batchv1
 					},
 				},
 				Spec: corev1.PodSpec{
+					ServiceAccountName: "kubectl-sa-" + m.Name,
 					Containers: []corev1.Container{{
 						Image:   "quay.io/disco-mirror/mirror-sync:latest",
 						Name:    "sync-" + m.Name,
@@ -417,6 +512,52 @@ func (r *ImportReconciler) syncJob(m *mirroropenshiftiov1alpha1.Import) *batchv1
 	}
 	ctrl.SetControllerReference(m, job, r.Scheme)
 	return job
+}
+
+func (r *ImportReconciler) createCMSA(m *mirroropenshiftiov1alpha1.Import) *corev1.ServiceAccount {
+	sa := &corev1.ServiceAccount{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "kubectl-sa-" + m.Name,
+			Namespace: m.Namespace,
+		},
+	}
+	ctrl.SetControllerReference(m, sa, r.Scheme)
+	return sa
+}
+
+func (r *ImportReconciler) createClusterRole(m *mirroropenshiftiov1alpha1.Import) *rbacv1.ClusterRole {
+	clusterRole := &rbacv1.ClusterRole{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "kubectl-sa-" + m.Name,
+		},
+		Rules: []rbacv1.PolicyRule{{
+			APIGroups: []string{""},
+			Resources: []string{"configmaps"},
+			Verbs:     []string{"get", "list", "watch", "create", "update", "patch"},
+		}},
+	}
+	ctrl.SetControllerReference(m, clusterRole, r.Scheme)
+	return clusterRole
+}
+
+func (r *ImportReconciler) createClusterRoleBinding(m *mirroropenshiftiov1alpha1.Import) *rbacv1.ClusterRoleBinding {
+	clusterRoleBinding := &rbacv1.ClusterRoleBinding{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "kubectl-sa-" + m.Name,
+		},
+		Subjects: []rbacv1.Subject{{
+			Kind:      "ServiceAccount",
+			Name:      "kubectl-sa-" + m.Name,
+			Namespace: m.Namespace,
+		}},
+		RoleRef: rbacv1.RoleRef{
+			Kind:     "ClusterRole",
+			Name:     "kubectl-sa-" + m.Name,
+			APIGroup: "rbac.authorization.k8s.io",
+		},
+	}
+	ctrl.SetControllerReference(m, clusterRoleBinding, r.Scheme)
+	return clusterRoleBinding
 }
 
 func (r *ImportReconciler) pvcCreate(m *mirroropenshiftiov1alpha1.Import) *corev1.PersistentVolumeClaim {

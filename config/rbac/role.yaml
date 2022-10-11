@@ -22,15 +22,27 @@ rules:
   resources:
   - clusterrolebindings
   verbs:
+  - create
+  - delete
   - get
+  - list
+  - patch
+  - update
   - use
+  - watch
 - apiGroups:
   - authorization.openshift.io
   resources:
   - clusterroles
   verbs:
+  - create
+  - delete
   - get
+  - list
+  - patch
+  - update
   - use
+  - watch
 - apiGroups:
   - authorization.openshift.io
   resources:
@@ -59,6 +71,18 @@ rules:
   - batch
   resources:
   - jobs
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - ""
+  resources:
+  - configmaps
   verbs:
   - create
   - delete
@@ -184,15 +208,27 @@ rules:
   resources:
   - clusterrolebindings
   verbs:
+  - create
+  - delete
   - get
+  - list
+  - patch
+  - update
   - use
+  - watch
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:
   - clusterroles
   verbs:
+  - create
+  - delete
   - get
+  - list
+  - patch
+  - update
   - use
+  - watch
 - apiGroups:
   - rbac.authorization.k8s.io
   resources:

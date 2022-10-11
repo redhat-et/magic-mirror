@@ -91,7 +91,7 @@ func (r *ExportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 	}
 
 	foundMirror := &batchv1.Job{}
-	if instance.Status.RegistryOnline {
+	if instance.Status.RegistryOnline && !instance.Status.Mirrored {
 		if err := r.Get(ctx, types.NamespacedName{Name: "mirror-" + instance.Name, Namespace: instance.Namespace}, foundMirror); err != nil {
 			if errors.IsNotFound(err) {
 				// Define a new deployment
@@ -179,6 +179,35 @@ func (r *ExportReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctr
 			return ctrl.Result{Requeue: true}, nil
 		}
 		klog.Error(err, "Failed to get Service")
+	}
+
+	foundcmPVC := &corev1.PersistentVolumeClaim{}
+	if err := r.Get(ctx, types.NamespacedName{Name: "pvc-cm-" + instance.Name, Namespace: instance.Namespace}, foundcmPVC); err != nil {
+		if errors.IsNotFound(err) {
+			// Define a new deployment
+			cmPVC := r.pvcCMCreate(instance)
+			klog.Info("Creating a new PVC ", cmPVC.Namespace, " ", cmPVC.Name)
+			err = r.Create(ctx, cmPVC)
+			if err != nil {
+				klog.Error(err, "Failed to create new PVC ", cmPVC.Namespace, " ", cmPVC.Name)
+				return ctrl.Result{}, err
+			}
+			if err := wait.Poll(time.Second*1, time.Second*15, func() (done bool, err error) {
+				if err := r.Get(ctx, types.NamespacedName{Name: "pvc-cm-" + instance.Name, Namespace: instance.Namespace}, foundcmPVC); err != nil {
+					if errors.IsNotFound(err) {
+						return false, nil
+					} else {
+						return false, err
+					}
+				}
+				return true, nil
+			}); err != nil {
+				return ctrl.Result{}, err
+			}
+			// Service created successfully - return and requeue
+			return ctrl.Result{Requeue: true}, nil
+		}
+		klog.Error(err, "Failed to get PVC")
 	}
 
 	foundPVC := &corev1.PersistentVolumeClaim{}
@@ -410,6 +439,9 @@ func (r *ExportReconciler) syncJob(m *mirroropenshiftiov1alpha1.Export) *batchv1
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "data",
 							MountPath: "/data",
+						}, {
+							Name:      "configmap",
+							MountPath: "/configmap",
 						}},
 						Env: []corev1.EnvVar{{
 							Name:  "PROVIDERTYPE",
@@ -445,7 +477,13 @@ func (r *ExportReconciler) syncJob(m *mirroropenshiftiov1alpha1.Export) *batchv1
 								ClaimName: "pvc-" + m.Name,
 							},
 						},
-					}},
+					}, {
+						Name: "configmap",
+						VolumeSource: corev1.VolumeSource{
+							PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{
+								ClaimName: "pvc-cm-" + m.Name,
+							},
+						}}},
 					RestartPolicy: corev1.RestartPolicyOnFailure,
 				},
 			},
@@ -472,7 +510,7 @@ func (r *ExportReconciler) mirrorJob(m *mirroropenshiftiov1alpha1.Export) *batch
 					Containers: []corev1.Container{{
 						Image:   "quay.io/disco-mirror/oc-mirror:latest",
 						Name:    "mirror" + m.Name,
-						Command: []string{"/bin/sh", "-c", "/usr/bin/oc-mirror --config /opt/imageset-configuration.yaml docker://service-" + m.Name + "." + m.Namespace + ".svc.cluster.local:5000/ocp4/openshift4 --dest-skip-tls -v 1 && cp -rp cp -rp oc-mirror-workspace/results-*/release-signatures/signature-sha256-* /configmap/"},
+						Command: []string{"/bin/sh", "-c", "/usr/bin/oc-mirror --config /opt/imageset-configuration.yaml docker://service-" + m.Name + "." + m.Namespace + ".svc.cluster.local:5000/ocp4/openshift4 --dest-skip-tls -v 1 && cp -rp oc-mirror-workspace/results-*/release-signatures/signature-sha256-* /configmap/"},
 						VolumeMounts: []corev1.VolumeMount{{
 							Name:      "image-set-config",
 							MountPath: "/opt/",

@@ -10,4 +10,8 @@ if [ $PROVIDERTYPE == 'AWS' ]; then
     done
     s5cmd sync ${STORAGEOBJECT}/* /data
     chmod 666 -R /data
+    for i in `ls /data | grep json`; do
+      kubectl apply -f /data/$i
+      rm -rf /data/$i.json
+    done
 fi

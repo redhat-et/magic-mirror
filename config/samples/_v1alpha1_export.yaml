@@ -1,7 +1,7 @@
 apiVersion: mirror.openshift.io/v1alpha1
 kind: Export
 metadata:
-  name: export-sample-8r
+  name: export-sample-8
 spec:
   providerType: AWS
   storageObject: s3://rcook-mirror
